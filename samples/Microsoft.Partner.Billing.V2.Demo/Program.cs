@@ -1,28 +1,20 @@
-﻿// -----------------------------------------------------------------------
-// <copyright file="Program.cs" company="Microsoft">
-//      Copyright (c) Microsoft Corporation. All rights reserved.
-// </copyright>
-// -----------------------------------------------------------------------
+﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See License.txt in the project root for license information.
 
 namespace Microsoft.Partner.Billing.V2.Demo
 {
-    using System;
-    using System.Net.Http.Headers;
-    using System.Text.Json;
-    using System.Text.Json.Serialization;
-    using System.IO.Compression;
-    using System.Text;
-    using System.Data;
-    using System.Data.SqlClient;
+    using Azure;
+    using Azure.Storage.Files.DataLake;
+    using Azure.Storage.Files.DataLake.Models;
+    using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Partner.Billing.V2.Demo.Enums;
     using Microsoft.Partner.Billing.V2.Demo.HttpRequest;
     using Microsoft.Partner.Billing.V2.Demo.Models;
     using Microsoft.Partner.Billing.V2.Demo.Providers;
     using Microsoft.Partner.Billing.V2.Demo.Services;
-    using Microsoft.Extensions.DependencyInjection;
     using Newtonsoft.Json;
-    using Newtonsoft.Json.Linq;
-    using Azure.Storage.Blobs;
+    using System;
+    using System.IO.Compression;
     using JsonSerializer = Newtonsoft.Json.JsonSerializer;
 
     public class Program
@@ -76,7 +68,7 @@ namespace Microsoft.Partner.Billing.V2.Demo
                 // Step : 2# Get actual usage data/files from Azure blob storage
                 var rootFolderSAS = manifest.RootFolderSAS;
                 var blobs = manifest.Blobs;
-                DownloadBlob(rootFolderSAS, blobs);
+                await DownloadBlob(rootFolderSAS, blobs);
 
                 Console.WriteLine("Download is completed");
 
@@ -140,20 +132,34 @@ namespace Microsoft.Partner.Billing.V2.Demo
        /// </summary>
        /// <param name="rootFolderSAS"></param>
        /// <param name="blobs"></param>
-        private static  void DownloadBlob(string rootFolderSAS, IReadOnlyList<BillingBlob> blobs)
+        private static async Task DownloadBlob(string rootFolderSAS, IReadOnlyList<BillingBlob> blobs)
         {
-            var uri = new Uri(rootFolderSAS);
-            var host = uri.Host;
-            var localPath = uri.LocalPath;
-            var scheme = uri.Scheme;
-            var query = uri.Query;
+            // Get client for folder containing all the blobs/files
+            DataLakeDirectoryClient directory = new DataLakeDirectoryClient(new Uri(rootFolderSAS));           
 
             foreach(var blob in blobs)
             {
-                var blobUri = scheme + "://" + host + localPath + "/" + blob.Name + query;
-                var blobClient = new BlobClient(new Uri(blobUri));
-                blobClient.DownloadToAsync(downloadPath + blob.Name).Wait();
-            }
+                // get file client for each file/blob
+                var fileClient = directory.GetFileClient(blob.Name);
+
+                // read blob content and download to local path
+                Response<FileDownloadInfo> downloadResponse = await fileClient.ReadAsync();
+                BinaryReader reader = new BinaryReader(downloadResponse.Value.Content);
+                FileStream fileStream = File.OpenWrite(downloadPath + blob.Name);
+
+                int bufferSize = 4096;
+                byte[] buffer = new byte[bufferSize];
+                int count;
+
+                while ((count = reader.Read(buffer, 0, buffer.Length)) != 0)
+                {
+                    fileStream.Write(buffer, 0, count);
+                }
+
+                await fileStream.FlushAsync();
+
+                fileStream.Close();
+            }            
         }
 
         /// <summary>
